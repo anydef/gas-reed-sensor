@@ -2,7 +2,7 @@
 It is a small project that allows flushing Gas meter sensors (reed-base) data into the Pushgateway.
 
 # Why push gateway?
-Atm. I am not interested in mqtt solution and am piggybagging on the already running Grafana+Prometheus+Pushgateway setup.
+Atm. I am not interested in mqtt solution and am piggybacking on the already running Grafana+Prometheus+Pushgateway setup.
 
 # Known issues.
 For unknown to me reasons, reed-sensor either gets duplicate readings or gets "stuck" for a brief moment.
@@ -60,3 +60,5 @@ GET http://192.168.178.68/checkpoints
 ```
 GET http://192.168.178.68/checkpoint
 ```
+
+
