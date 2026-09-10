@@ -1,0 +1,27 @@
+[package]
+name = "gas-reed-rs"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+cortex-m = "0.7.9"
+cortex-m-rt = "0.7.6"
+critical-section = "1.2.0"
+cyw43 = { version = "0.7.0", features = ["defmt", "firmware-logs"] }
+
+cyw43-pio = { version = "0.10.0", features = ["defmt"] }
+cyw43-setup = { version = "0.1.1", features = ["wifi"] }
+
+defmt = "1.1.1"
+defmt-rtt = "1.3.0"
+embassy-embedded-hal = "0.6.0"
+embassy-executor = { version = "0.10.0", features = ["defmt"] }
+embassy-rp = { version = "0.10.0", features = ["critical-section-impl", "defmt", "executor-interrupt", "executor-thread", "rp2040", "time-driver", "unstable-pac"] }
+embassy-time = "0.5.1"
+panic-probe = "1.0.0"
+portable-atomic = { version = "1.15.0", features = ["critical-section"] }
+static_cell = "2.1.1"
+
+
+[profile.release]
+debug = true
