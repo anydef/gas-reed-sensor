@@ -7,20 +7,29 @@ use cyw43_setup::{CLM, FW, NVRAM};
 use defmt::*;
 use defmt_rtt as _;
 use embassy_executor::Spawner;
-use embassy_net::{Config, StackResources};
+use embassy_net::dns::DnsSocket;
+use embassy_net::tcp::client::{TcpClient, TcpClientState};
+use embassy_net::{Config, Stack, StackResources};
 use embassy_rp::clocks::RoscRng;
-use embassy_rp::gpio::{Level, Output};
+use embassy_rp::gpio::{Input, Level, Output, Pull};
 use embassy_rp::peripherals::{DMA_CH0, DMA_CH1, PIO0};
 use embassy_rp::pio::{InterruptHandler, Pio};
 use embassy_rp::{bind_interrupts, dma};
+use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
+use embassy_sync::channel::{Channel, Receiver, Sender};
 use embassy_time::{Duration, Timer};
 use panic_probe as _;
+use reqwless::client::{HttpClient, TlsConfig};
 use static_cell::StaticCell;
 
 bind_interrupts!(struct Irqs {
     PIO0_IRQ_0 => InterruptHandler<PIO0>;
     DMA_IRQ_0 => dma::InterruptHandler<DMA_CH0>, dma::InterruptHandler<DMA_CH1>;
 });
+enum ReedState {
+    Contact,
+}
+static REED_CHANNEL: Channel<ThreadModeRawMutex, ReedState, 64> = Channel::new();
 
 #[embassy_executor::task]
 async fn cyw43_task(
@@ -32,6 +41,34 @@ async fn cyw43_task(
 #[embassy_executor::task]
 async fn net_task(mut runner: embassy_net::Runner<'static, cyw43::NetDriver<'static>>) -> ! {
     runner.run().await
+}
+
+#[embassy_executor::task]
+async fn reed_task(
+    mut pin: Input<'static>,
+    control: Sender<'static, ThreadModeRawMutex, ReedState, 64>,
+) -> ! {
+    loop {
+        pin.wait_for_rising_edge().await;
+        control.send(ReedState::Contact).await;
+        Timer::after(Duration::from_secs(3)).await;
+        info!("touchdown!");
+    }
+}
+#[embassy_executor::task]
+async fn led_task(
+    mut led: Output<'static>,
+    receiver: Receiver<'static, ThreadModeRawMutex, ReedState, 64>,
+) -> ! {
+    loop {
+        match receiver.receive().await {
+            ReedState::Contact => {
+                led.set_high();
+                Timer::after(Duration::from_millis(500)).await;
+                led.set_low();
+            }
+        }
+    }
 }
 
 #[embassy_executor::main(
@@ -79,7 +116,7 @@ async fn main(spawner: Spawner) {
     let seed = rng.next_u64();
 
     static RESOURCES: StaticCell<StackResources<5>> = StaticCell::new();
-    let (stack, runner) = embassy_net::new(
+    let (network_stack, runner) = embassy_net::new(
         net_device,
         config,
         RESOURCES.init(StackResources::new()),
@@ -96,25 +133,65 @@ async fn main(spawner: Spawner) {
     }
 
     info!("waiting for link...");
-    stack.wait_link_up().await;
+    network_stack.wait_link_up().await;
 
     info!("waiting for DHCP...");
-    stack.wait_config_up().await;
+    network_stack.wait_config_up().await;
 
     // And now we can use it!
     info!("Stack is up!");
 
+    // access_website(network_stack, rng.next_u64()).await;
 
+    let led = Output::new(peripherals.PIN_15, Level::Low);
+
+    let reed = Input::new(peripherals.PIN_14, Pull::Down);
+    spawner.spawn(unwrap!(reed_task(reed, REED_CHANNEL.sender())));
+    spawner.spawn(unwrap!(led_task(led, REED_CHANNEL.receiver())));
     loop {
         info!("led on");
         control.gpio_set(0, true).await;
+        // led.set_high();
         // led.set_high();
         Timer::after(Duration::from_millis(1000)).await;
         info!("led off");
 
         control.gpio_set(0, false).await;
+        // led.set_low();
 
         // led.set_low();
         Timer::after(Duration::from_millis(500)).await;
     }
+}
+
+async fn access_website(stack: Stack<'_>, tls_seed: u64) {
+    let mut rx_buffer = [0; 4096];
+    let mut tx_buffer = [0; 4096];
+    let dns = DnsSocket::new(stack);
+    let tcp_state = TcpClientState::<1, 4096, 4096>::new();
+    let tcp = TcpClient::new(stack, &tcp_state);
+
+    let tls = TlsConfig::new(
+        tls_seed,
+        &mut rx_buffer,
+        &mut tx_buffer,
+        reqwless::client::TlsVerify::None,
+    );
+
+    let mut client = HttpClient::new_with_tls(&tcp, &dns, tls);
+    let mut buffer = [0u8; 4096];
+    let mut http_req = client
+        .request(
+            reqwless::request::Method::GET,
+            "https://jsonplaceholder.typicode.com/posts/1",
+        )
+        .await
+        .unwrap();
+    let response = http_req.send(&mut buffer).await.unwrap();
+
+    info!("Got response");
+    let res = response.body().read_to_end().await.unwrap();
+
+    let content = core::str::from_utf8(res).unwrap();
+    println!("{}", content);
 }

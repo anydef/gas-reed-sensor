@@ -23,6 +23,9 @@ embassy-net = { version = "0.9.1", features = ["defmt", "icmp", "tcp", "udp", "r
 panic-probe = "1.0.0"
 portable-atomic = { version = "1.15.0", features = ["critical-section"] }
 static_cell = "2.1.1"
+reqwless = { version = "0.14.0"}
+der = { version = "0.8.2", features = ["heapless"] }
+embassy-sync = { version = "0.8.0", features = ["defmt"] }
 
 
 [profile.release]
