@@ -9,7 +9,7 @@
 //! new memory settings.
 
 use std::env;
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::Write;
 use std::path::PathBuf;
 
@@ -33,4 +33,20 @@ fn main() {
     println!("cargo:rustc-link-arg-bins=-Tlink.x");
     println!("cargo:rustc-link-arg-bins=-Tlink-rp.x");
     println!("cargo:rustc-link-arg-bins=-Tdefmt.x");
+
+    // Read WIFI_SSID/WIFI_PASSWORD (and anything else) out of `.env` and expose
+    // them to `env!()` in the crate via build-time env vars. `.env` itself is
+    // gitignored; see `.env.example` for the expected format.
+    println!("cargo:rerun-if-changed=.env");
+    if let Ok(contents) = fs::read_to_string(".env") {
+        for line in contents.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            if let Some((key, value)) = line.split_once('=') {
+                println!("cargo:rustc-env={}={}", key.trim(), value.trim());
+            }
+        }
+    }
 }

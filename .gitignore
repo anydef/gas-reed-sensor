@@ -1,3 +1,5 @@
 gas-reed-sensor.iml
 /env.conf
 embassy
+/gas-reed-rs/target/
+/gas-reed-rs/.env
