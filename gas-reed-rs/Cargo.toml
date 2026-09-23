@@ -26,6 +26,7 @@ static_cell = "2.1.1"
 reqwless = { version = "0.14.0"}
 der = { version = "0.8.2", features = ["heapless"] }
 embassy-sync = { version = "0.8.0", features = ["defmt"] }
+picoserve = { version = "0.20.1", features = ["defmt", "embassy"] }
 
 
 [profile.release]

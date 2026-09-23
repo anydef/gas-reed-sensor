@@ -1,17 +1,19 @@
 #![no_std]
 #![no_main]
 
-use cyw43::JoinOptions;
+use cyw43::{JoinOptions, new};
 use cyw43_pio::{DEFAULT_CLOCK_DIVIDER, PioSpi};
 use cyw43_setup::{CLM, FW, NVRAM};
 use defmt::*;
 use defmt_rtt as _;
+use embassy_executor::_export::task_pool_align;
 use embassy_executor::Spawner;
 use embassy_net::dns::DnsSocket;
 use embassy_net::tcp::client::{TcpClient, TcpClientState};
 use embassy_net::{Config, Stack, StackResources};
 use embassy_rp::clocks::RoscRng;
 use embassy_rp::gpio::{Input, Level, Output, Pull};
+use embassy_rp::multicore::spawn_core1;
 use embassy_rp::peripherals::{DMA_CH0, DMA_CH1, PIO0};
 use embassy_rp::pio::{InterruptHandler, Pio};
 use embassy_rp::{bind_interrupts, dma};
@@ -19,6 +21,8 @@ use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::channel::{Channel, Receiver, Sender};
 use embassy_time::{Duration, Timer};
 use panic_probe as _;
+use picoserve::routing::get;
+use picoserve::{AppBuilder, AppRouter, Router, make_static};
 use reqwless::client::{HttpClient, TlsConfig};
 use static_cell::StaticCell;
 
@@ -71,6 +75,30 @@ async fn led_task(
     }
 }
 
+
+const WEB_TASK_POOL_SIZE: usize = 4;
+const CONFIG: picoserve::Config = picoserve::Config::const_default().keep_connection_alive();
+
+#[embassy_executor::task(pool_size= WEB_TASK_POOL_SIZE)]
+async fn web_task(
+    task_id: usize,
+    stack: embassy_net::Stack<'static>
+) -> ! {
+    let app = Router::new().route("/", get(|| async move { "Hello, World!" }))
+        .route("/metrics", get(|| async move {
+            "# HELP up Node status\n\
+             up {}\n"
+        }));
+    let port = 80;
+    let mut tcp_rx_buffer = [0; 1024];
+    let mut tcp_tx_buffer = [0; 1024];
+    let mut http_buffer = [0; 2048];
+    picoserve::Server::new(&app, &CONFIG, &mut http_buffer)
+        .listen_and_serve(task_id, stack, port, &mut tcp_rx_buffer, &mut tcp_tx_buffer)
+        .await
+        .into_never()
+}
+
 #[embassy_executor::main(
     executor = "embassy_rp::executor::Executor",
     entry = "cortex_m_rt::entry"
@@ -102,6 +130,7 @@ async fn main(spawner: Spawner) {
         // dma::Channel::new(peripherals.DMA_CH1, Irqs),
     );
 
+    // make_static!()
     static STATE: StaticCell<cyw43::State> = StaticCell::new();
     let state = STATE.init(cyw43::State::new());
     let (net_device, mut control, runner) = cyw43::new(state, pwr, spi, fw, nvram).await;
@@ -115,7 +144,7 @@ async fn main(spawner: Spawner) {
     let config = Config::dhcpv4(Default::default());
     let seed = rng.next_u64();
 
-    static RESOURCES: StaticCell<StackResources<5>> = StaticCell::new();
+    static RESOURCES: StaticCell<StackResources<8>> = StaticCell::new();
     let (network_stack, runner) = embassy_net::new(
         net_device,
         config,
@@ -148,6 +177,15 @@ async fn main(spawner: Spawner) {
     let reed = Input::new(peripherals.PIN_14, Pull::Down);
     spawner.spawn(unwrap!(reed_task(reed, REED_CHANNEL.sender())));
     spawner.spawn(unwrap!(led_task(led, REED_CHANNEL.receiver())));
+
+
+    for task_id in 0..WEB_TASK_POOL_SIZE {
+        spawner.spawn(web_task(task_id, network_stack).unwrap());
+    }
+    info!(
+        "Assigned IP: {}",
+        network_stack.config_v4().unwrap().address
+    );
     loop {
         info!("led on");
         control.gpio_set(0, true).await;
