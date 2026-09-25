@@ -1,6 +1,8 @@
 #![no_std]
 #![no_main]
 
+pub mod metrics;
+
 use cyw43::{JoinOptions, new};
 use cyw43_pio::{DEFAULT_CLOCK_DIVIDER, PioSpi};
 use cyw43_setup::{CLM, FW, NVRAM};
@@ -56,9 +58,12 @@ async fn reed_task(
         pin.wait_for_rising_edge().await;
         control.send(ReedState::Contact).await;
         Timer::after(Duration::from_secs(3)).await;
+        metrics::meter_metrics::get().meter_tick.inc();
+        // metrics::get().meter_tick.inc();
         info!("touchdown!");
     }
 }
+
 #[embassy_executor::task]
 async fn led_task(
     mut led: Output<'static>,
@@ -75,20 +80,22 @@ async fn led_task(
     }
 }
 
-
 const WEB_TASK_POOL_SIZE: usize = 4;
 const CONFIG: picoserve::Config = picoserve::Config::const_default().keep_connection_alive();
 
 #[embassy_executor::task(pool_size= WEB_TASK_POOL_SIZE)]
-async fn web_task(
-    task_id: usize,
-    stack: embassy_net::Stack<'static>
-) -> ! {
-    let app = Router::new().route("/", get(|| async move { "Hello, World!" }))
-        .route("/metrics", get(|| async move {
-            "# HELP up Node status\n\
-             up {}\n"
-        }));
+async fn web_task(task_id: usize, stack: embassy_net::Stack<'static>) -> ! {
+    let app = Router::new()
+        .route("/", get(|| async move { "Hello, World!" }))
+        .route(
+            "/metrics",
+            get(|| async {
+                info!("Requested metrics");
+                picoserve::response::chunked::ChunkedResponse::new(
+                    metrics::meter_metrics::MetricsResponse,
+                )
+            }),
+        );
     let port = 80;
     let mut tcp_rx_buffer = [0; 1024];
     let mut tcp_tx_buffer = [0; 1024];
@@ -178,7 +185,6 @@ async fn main(spawner: Spawner) {
     spawner.spawn(unwrap!(reed_task(reed, REED_CHANNEL.sender())));
     spawner.spawn(unwrap!(led_task(led, REED_CHANNEL.receiver())));
 
-
     for task_id in 0..WEB_TASK_POOL_SIZE {
         spawner.spawn(web_task(task_id, network_stack).unwrap());
     }
@@ -187,18 +193,18 @@ async fn main(spawner: Spawner) {
         network_stack.config_v4().unwrap().address
     );
     loop {
-        info!("led on");
+        // info!("led on");
         control.gpio_set(0, true).await;
         // led.set_high();
         // led.set_high();
         Timer::after(Duration::from_millis(1000)).await;
-        info!("led off");
+        // info!("led off");
 
         control.gpio_set(0, false).await;
         // led.set_low();
 
         // led.set_low();
-        Timer::after(Duration::from_millis(500)).await;
+        Timer::after(Duration::from_millis(5000)).await;
     }
 }
 

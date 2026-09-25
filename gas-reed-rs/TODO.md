@@ -18,7 +18,7 @@ mirroring what `../webserver_async.py` already does on the MicroPython side.
 
 ## Tasks
 
-- [ ] Add `picoserve` to `Cargo.toml`; check which feature flags it needs for
+- [x] Add `picoserve` to `Cargo.toml`; check which feature flags it needs for
       `embassy-net`/`embedded-io-async` integration (no_std target).
 - [x] Decide where the running total is stored. `REED_CHANNEL` is an event
       queue (`ReedState::Contact`), not state — need a separate shared
