@@ -1,5 +1,3 @@
-use embeprom::{Counter, Gauge};
-
 /// Gas meter metrics
 pub mod meter_metrics {
     use defmt::info;
@@ -38,6 +36,4 @@ pub mod meter_metrics {
             chunk_writer.finalize().await
         }
     }
-
-
 }

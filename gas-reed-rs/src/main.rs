@@ -1,8 +1,13 @@
 #![no_std]
 #![no_main]
+// extern crate alloc;
 
+pub mod meter_view;
 pub mod metrics;
 
+// use alloc::string::ToString;
+use core::fmt::{Debug, Write};
+use core::num::ParseIntError;
 use cyw43::{JoinOptions, new};
 use cyw43_pio::{DEFAULT_CLOCK_DIVIDER, PioSpi};
 use cyw43_setup::{CLM, FW, NVRAM};
@@ -22,9 +27,11 @@ use embassy_rp::{bind_interrupts, dma};
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::channel::{Channel, Receiver, Sender};
 use embassy_time::{Duration, Timer};
+use heapless::String;
 use panic_probe as _;
-use picoserve::routing::get;
+use picoserve::routing::{get, post};
 use picoserve::{AppBuilder, AppRouter, Router, make_static};
+use picoserve::response::{IntoResponse, StatusCode};
 use reqwless::client::{HttpClient, TlsConfig};
 use static_cell::StaticCell;
 
@@ -59,6 +66,7 @@ async fn reed_task(
         control.send(ReedState::Contact).await;
         Timer::after(Duration::from_secs(3)).await;
         metrics::meter_metrics::get().meter_tick.inc();
+        metrics::meter_metrics::get().meter_absolute.add(1);
         // metrics::get().meter_tick.inc();
         info!("touchdown!");
     }
@@ -83,10 +91,28 @@ async fn led_task(
 const WEB_TASK_POOL_SIZE: usize = 4;
 const CONFIG: picoserve::Config = picoserve::Config::const_default().keep_connection_alive();
 
+
 #[embassy_executor::task(pool_size= WEB_TASK_POOL_SIZE)]
 async fn web_task(task_id: usize, stack: embassy_net::Stack<'static>) -> ! {
     let app = Router::new()
-        .route("/", get(|| async move { "Hello, World!" }))
+        .route("/", get(meter_view::hello_handler))
+        .route("/meter", post(|form_param: heapless::String<16> | async move {
+            info!("Form param {}", form_param);
+            let (name, value) = form_param.split_once("=").expect("Failed parsing form value");
+            let mut buf: String<32> = String::new();
+            match value.parse::<i64>() {
+                Ok(v) => {
+                    metrics::meter_metrics::get().meter_absolute.set(v);
+                    (StatusCode::SEE_OTHER, ("Location", "/"), "")
+
+                }
+                Err(v) => {
+                    error!("failed parsing value {}", defmt::Debug2Format(&v));
+                    (StatusCode::SEE_OTHER, ("Location", "/?validation=error"), "")
+
+                }
+            }
+        }))
         .route(
             "/metrics",
             get(|| async {
